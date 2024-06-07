@@ -6,7 +6,7 @@ import PackageDescription
 let package = Package(
     name: "DirectoryChangeWatcher",
     platforms: [
-        .iOS(.v16),
+        .iOS(.v17),
         .macOS(.v14)
     ],
     products: [
