@@ -1,5 +1,5 @@
 {
-  "originHash" : "d41bbdfe46df0004b30986f2b6a9a285cfa392cbfe3bfdf6fe24d76eb25fba97",
+  "originHash" : "4e44185dbd1cf5010da1c0ad805342400ea3c1bc4908a4baaf6aec4a20e49c29",
   "pins" : [
     {
       "identity" : "concurrencysafelogger",
@@ -16,7 +16,7 @@
       "location" : "https://github.com/eidria/PGCommon.git",
       "state" : {
         "branch" : "main",
-        "revision" : "421030362092c6e385777e7a42864a96b0b8d61d"
+        "revision" : "1506aa4426ab4e8162b1298bac95cae3b71734b3"
       }
     }
   ],

@@ -68,6 +68,7 @@ public class DirectoryChangeWatcher: NSObject, NSFilePresenter {
 
     deinit {
         NSFileCoordinator.removeFilePresenter(self)
+        changeStreamHandler.finish()
     }
 
     public func setWatchedDirectory(to url: URL) {
@@ -81,7 +82,7 @@ public extension DirectoryChangeWatcher {
 
      A common sequence that your NSFilePresenter must handle is the file coordination mechanism sending this message, then sending -savePresentedItemChangesWithCompletionHandler:, and then, after you have invoked that completion handler, invoking your reacquirer.
      */
-    func relinquishPresentedItem(toReader reader: @escaping @Sendable ((() -> Void)?) -> Void) {
+    func relinquishPresentedItem(toReader reader: @escaping @Sendable ((@Sendable () -> Void)?) -> Void) {
         changeStreamHandler.add(.unknown("relinquishPresentedItem toReader"))
         reader({})
     }
@@ -90,7 +91,7 @@ public extension DirectoryChangeWatcher {
 
      A common sequence that your NSFilePresenter must handle is the file coordination mechanism sending this message, then sending -accommodatePresentedItemDeletionWithCompletionHandler: or -savePresentedItemChangesWithCompletionHandler:, and then, after you have invoked that completion handler, invoking your reacquirer. It is also common for your NSFilePresenter to be sent a combination of the -presented... messages listed below in between relinquishing and reacquiring.
      */
-    func relinquishPresentedItem(toWriter writer: @escaping @Sendable ((() -> Void)?) -> Void) {
+    func relinquishPresentedItem(toWriter writer: @escaping @Sendable ((@Sendable () -> Void)?) -> Void) {
         changeStreamHandler.add(.unknown("relinquishPresentedItem toWriter"))
         writer({})
     }
