@@ -1,15 +1,6 @@
 {
-  "originHash" : "4e44185dbd1cf5010da1c0ad805342400ea3c1bc4908a4baaf6aec4a20e49c29",
+  "originHash" : "c322e72c07311e1b7b6498fbe11e1dac74087f5293f45d61c245ee5528e185fe",
   "pins" : [
-    {
-      "identity" : "concurrencysafelogger",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/eidria/ConcurrencySafeLogger.git",
-      "state" : {
-        "branch" : "main",
-        "revision" : "7aa79e14cee751a837d73ca02b6ffe075388b1c3"
-      }
-    },
     {
       "identity" : "pgcommon",
       "kind" : "remoteSourceControl",
