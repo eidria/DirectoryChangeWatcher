@@ -44,43 +44,26 @@ public enum DirectoryChange: Sendable {
     }
 }
 
-@Observable
-public class DirectoryChangeWatcher: NSObject, NSFilePresenter {
-    public var presentedItemOperationQueue = OperationQueue.main
-
-    public var presentedItemURL: URL? {
-        willSet {
-            NSFileCoordinator.removeFilePresenter(self)
-        }
-
-        didSet {
-            NSFileCoordinator.addFilePresenter(self)
-        }
-    }
-
-    public var changePublisher = PassthroughSubject<DirectoryChange, Never>()
-
-    override public init() {
+public final class DirectoryChangeWatcher: NSObject, NSFilePresenter, Sendable {
+    public let presentedItemOperationQueue = OperationQueue.main
+    public let presentedItemURL: URL?
+    
+    private let changePublisher = AsyncStreamHandler<DirectoryChange>()
+    public var asyncStream: AsyncStream<DirectoryChange> { changePublisher.stream }
+    
+    public init(_ url: URL) {
+        presentedItemURL = url
         super.init()
         NSFileCoordinator.addFilePresenter(self)
-        print("SourceDirectoryWatcher init")
     }
 
     deinit {
+        changePublisher.finish()
         NSFileCoordinator.removeFilePresenter(self)
     }
 
-    public func setWatchedDirectory(to url: URL) {
-        presentedItemURL = url
-        sendChange(.watchedDirectoryChanged(url))
-    }
-
     public func sendChange(_ change: DirectoryChange) {
-        Task {
-            await MainActor.run {
-                changePublisher.send(change)
-            }
-        }
+        changePublisher.add(change)
     }
 }
 
