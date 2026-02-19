@@ -5,9 +5,8 @@
 //  Created by Dan Galbraith on 12/29/22.
 //
 
-import Combine
 import Foundation
-import PGCommon
+import os
 
 public enum DirectoryChange: Sendable {
     case watchedDirectoryChanged(URL)
@@ -45,25 +44,53 @@ public enum DirectoryChange: Sendable {
 }
 
 public final class DirectoryChangeWatcher: NSObject, NSFilePresenter, Sendable {
+    public typealias Stream = AsyncStream<DirectoryChange>
+    public typealias Continuation = Stream.Continuation
+    public typealias BufferingPolicy = Continuation.BufferingPolicy
+
     public let presentedItemOperationQueue = OperationQueue.main
     public let presentedItemURL: URL?
     
-    private let changePublisher = AsyncStreamHandler<DirectoryChange>()
-    public var asyncStream: AsyncStream<DirectoryChange> { changePublisher.stream }
+    public let stream: Stream
+    private let continuation: Continuation
+    
+    /// Tracks whether the watcher has been stopped to prevent double-removal
+    private let isStopped = OSAllocatedUnfairLock(initialState: false)
     
     public init(_ url: URL) {
+        var tempContinuation: Stream.Continuation?
+        stream = Stream(bufferingPolicy: .unbounded) { continuation in
+            tempContinuation = continuation
+        }
+        
+        continuation = tempContinuation!
         presentedItemURL = url
         super.init()
         NSFileCoordinator.addFilePresenter(self)
     }
-
-    deinit {
-        changePublisher.finish()
-        NSFileCoordinator.removeFilePresenter(self)
+    
+    /// Stops watching for directory changes and releases system resources.
+    ///
+    /// Call this method when you're done observing directory changes. This removes
+    /// the file presenter from `NSFileCoordinator` and finishes the async stream.
+    ///
+    /// - Important: You must call this method to allow the `DirectoryChangeWatcher`
+    ///   to be deallocated, since `NSFileCoordinator` holds a strong reference to
+    ///   file presenters. Failing to call `stop()` will result in a memory leak.
+    ///
+    /// It is safe to call this method multiple times.
+    public func stop() {
+        isStopped.withLock { stopped in
+            guard !stopped else { return }
+            stopped = true
+            continuation.finish()
+            NSFileCoordinator.removeFilePresenter(self)
+        }
     }
 
-    public func sendChange(_ change: DirectoryChange) {
-        changePublisher.add(change)
+    deinit {
+        // Ensure cleanup happens even if stop() wasn't called explicitly
+        stop()
     }
 }
 
@@ -73,7 +100,7 @@ public extension DirectoryChangeWatcher {
      A common sequence that your NSFilePresenter must handle is the file coordination mechanism sending this message, then sending -savePresentedItemChangesWithCompletionHandler:, and then, after you have invoked that completion handler, invoking your reacquirer.
      */
     func relinquishPresentedItem(toReader reader: @escaping @Sendable ((@Sendable () -> Void)?) -> Void) {
-        sendChange(.unknown("relinquishPresentedItem toReader"))
+        continuation.yield(.unknown("relinquishPresentedItem toReader"))
         reader({})
     }
 
@@ -82,7 +109,7 @@ public extension DirectoryChangeWatcher {
      A common sequence that your NSFilePresenter must handle is the file coordination mechanism sending this message, then sending -accommodatePresentedItemDeletionWithCompletionHandler: or -savePresentedItemChangesWithCompletionHandler:, and then, after you have invoked that completion handler, invoking your reacquirer. It is also common for your NSFilePresenter to be sent a combination of the -presented... messages listed below in between relinquishing and reacquiring.
      */
     func relinquishPresentedItem(toWriter writer: @escaping @Sendable ((@Sendable () -> Void)?) -> Void) {
-        sendChange(.unknown("relinquishPresentedItem toWriter"))
+        continuation.yield(.unknown("relinquishPresentedItem toWriter"))
         writer({})
     }
 
@@ -93,7 +120,8 @@ public extension DirectoryChangeWatcher {
      The file coordination mechanism does not always send -relinquishPresentedItemToReader: or -relinquishPresentedItemToWriter: to your NSFilePresenter before sending this message. For example, other process' use of -[NSFileCoordinator prepareForReadingItemsAtURLs:options:writingItemsAtURLs:options:error:byAccessor:] can cause this to happen.
      */
     func savePresentedItemChanges(completionHandler: @escaping @Sendable (Error?) -> Void) {
-        sendChange(.unknown("savePresentedItemChanges"))
+        continuation.yield(.unknown("savePresentedItemChanges"))
+        completionHandler(nil)
     }
 
     //    public func savePresentedItemChanges() async throws {
@@ -109,7 +137,7 @@ public extension DirectoryChangeWatcher {
      */
     func accommodatePresentedItemDeletion(completionHandler: @escaping @Sendable (Error?) -> Void) {
         let lastChange = "accommodatePresentedItemDeletion"
-        sendChange(.unknown(lastChange))
+        continuation.yield(.unknown(lastChange))
         completionHandler(nil)
     }
 
@@ -127,7 +155,7 @@ public extension DirectoryChangeWatcher {
      Not all programs use file coordination. Your NSFileProvider may be sent this message without being sent -relinquishPresentedItemToWriter: first. Make your application do the best it can in that case.
      */
     func presentedItemDidMove(to newURL: URL) {
-        sendChange(.presentedItemMoved(newURL))
+        continuation.yield(.presentedItemMoved(newURL))
     }
 
     /* These messages are sent by the file coordination machinery only when the presented item is a file or file package.
@@ -140,7 +168,7 @@ public extension DirectoryChangeWatcher {
      Not all programs use file coordination. Your NSFileProvider may be sent this message without being sent -relinquishPresentedItemToWriter: first. Make your application do the best it can in that case.
      */
     func presentedItemDidChange() {
-        sendChange(.presentedItemChanged(String(describing: presentedItemURL)))
+        continuation.yield(.presentedItemChanged(String(describing: presentedItemURL)))
     }
 
     /* Be notified that the presented file or file package's ubiquity attributes have changed. The possible attributes that can appear in the given set include only those specified by the receiver's value for observedPresentedItemUbiquityAttributes, or those in the default set if that property is not implemented.
@@ -149,7 +177,7 @@ public extension DirectoryChangeWatcher {
      */
     func presentedItemDidChangeUbiquityAttributes(_ attributes: Set<URLResourceKey>) {
         let lastChange = "presentedItemDidChangeUbiquityAttributes to \(attributes)"
-        sendChange(.unknown(lastChange))
+        continuation.yield(.unknown(lastChange))
     }
 
     /* The set of ubiquity attributes, which the receiver wishes to be notified about when they change for presentedItemURL. Valid attributes include only NSURLIsUbiquitousItemKey and any other attributes whose names start with "NSURLUbiquitousItem" or "NSURLUbiquitousSharedItem". The default set, in case this property is not implemented, includes of all such attributes.
@@ -166,17 +194,17 @@ public extension DirectoryChangeWatcher {
      */
     func presentedItemDidGain(_ version: NSFileVersion) {
         let lastChange = "presentedItemDidGain to \(version)"
-        sendChange(.unknown(lastChange))
+        continuation.yield(.unknown(lastChange))
     }
 
     func presentedItemDidLose(_ version: NSFileVersion) {
         let lastChange = "presentedItemDidLose \(version)"
-        sendChange(.unknown(lastChange))
+        continuation.yield(.unknown(lastChange))
     }
 
     func presentedItemDidResolveConflict(_ version: NSFileVersion) {
         let lastChange = "presentedItemDidResolveConflict to \(version)"
-        sendChange(.unknown(lastChange))
+        continuation.yield(.unknown(lastChange))
     }
 
     /* These methods are sent by the file coordination machinery only when the presented item is a directory. "Contained by the directory" in these comments means contained by the directory, a directory contained by the directory, and so on.
@@ -189,7 +217,7 @@ public extension DirectoryChangeWatcher {
     func accommodatePresentedSubitemDeletion(at url: URL, completionHandler: @escaping @Sendable (Error?) -> Void) {
         let lastChange = "accommodatePresentedSubitemDeletion at \(url)"
         completionHandler(nil)
-        sendChange(.unknown(lastChange))
+        continuation.yield(.unknown(lastChange))
     }
 
     //    public func accommodatePresentedSubitemDeletion(at url: URL) async throws {
@@ -201,7 +229,7 @@ public extension DirectoryChangeWatcher {
      Not all programs use file coordination. Your NSFileProvider may be sent this message without being sent -relinquishPresentedItemToWriter: first. Make your application do the best it can in that case.
      */
     func presentedSubitemDidAppear(at url: URL) {
-        sendChange(.subItemAdded(url))
+        continuation.yield(.subItemAdded(url))
     }
 
     /* Be notified that a file or directory contained by the directory has been moved or renamed. If this method is not implemented but -presentedItemDidChange is, and the directory is actually a file package, then the file coordination machinery will invoke -presentedItemDidChange instead.
@@ -209,7 +237,7 @@ public extension DirectoryChangeWatcher {
      Not all programs use file coordination. Your NSFileProvider may be sent this message without being sent -relinquishPresentedItemToWriter: first. Make your application do the best it can in that case.
      */
     func presentedSubitem(at oldURL: URL, didMoveTo newURL: URL) {
-        sendChange(.subItemMoved(oldURL, newURL))
+        continuation.yield(.subItemMoved(oldURL, newURL))
     }
 
     /* Be notified that the contents or attributes of a file or directory contained by the directory have been been written to. Depending on the situation the advice given for -presentedItemDidChange may apply here too. If this method is not implemented but -presentedItemDidChange is, and the directory is actually a file package, then the file coordination machinery will invoke -presentedItemDidChange instead.
@@ -218,7 +246,7 @@ public extension DirectoryChangeWatcher {
      */
     func presentedSubitemDidChange(at url: URL) {
         if url.lastPathComponent != ".DS_Store" {
-            sendChange(.subItemChanged(url))
+            continuation.yield(.subItemChanged(url))
         }
     }
 
@@ -226,16 +254,16 @@ public extension DirectoryChangeWatcher {
      */
     func presentedSubitem(at url: URL, didGain version: NSFileVersion) {
         let lastChange = "presentedSubitem at \(url) didGain \(version)"
-        sendChange(.unknown(lastChange))
+        continuation.yield(.unknown(lastChange))
     }
 
     func presentedSubitem(at url: URL, didLose version: NSFileVersion) {
         let lastChange = "presentedSubitem at \(url) didLose \(version)"
-        sendChange(.unknown(lastChange))
+        continuation.yield(.unknown(lastChange))
     }
 
     func presentedSubitem(at url: URL, didResolve version: NSFileVersion) {
         let lastChange = "presentedSubitem at \(url) didResolve \(version)"
-        sendChange(.unknown(lastChange))
+        continuation.yield(.unknown(lastChange))
     }
 }

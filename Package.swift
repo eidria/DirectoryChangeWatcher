@@ -15,15 +15,11 @@ let package = Package(
             name: "DirectoryChangeWatcher",
             targets: ["DirectoryChangeWatcher"])
     ],
-    dependencies: [
-        .package(url: "https://github.com/eidria/PGCommon.git", branch: "main")
-    ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
         .target(
             name: "DirectoryChangeWatcher",
-            dependencies: ["PGCommon"]
         ),
         .testTarget(
             name: "DirectoryChangeWatcherTests",
